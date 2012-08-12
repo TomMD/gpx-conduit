@@ -2,7 +2,7 @@
 -- options, see
 -- http://www.haskell.org/cabal/release/cabal-latest/doc/users-guide/authors.html#pkg-descr.
 Name:                gpx-conduit
-Version:             0.1
+Version:             0.1.1
 Synopsis:            Read GPX files using conduits
 Description:         Read GPX files into simple Point types.
 License:             BSD3

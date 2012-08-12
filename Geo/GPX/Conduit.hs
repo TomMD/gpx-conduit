@@ -119,8 +119,7 @@ parseETS pnt = do
                 case nameLocalName n of
                         "ele"   -> Just (\p t -> p { pntEle = Just (parseDouble t) })
                         "time"  -> Just (\p t -> p { pntTime = (parseUTC t) })
-                        "speed" -> Just (\p _ -> p ) -- We ignore 'speed'
-                        _ -> Nothing
+                        _       -> Just const -- ignore everything else
             handleName :: (MonadThrow m) => pnt -> (pnt -> Text -> pnt) -> Sink Event m pnt
             handleName p op = fmap (op p) content
         skipTagAndContents "extensions"
