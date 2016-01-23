@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables, FlexibleContexts, RankNTypes #-}
 {-| This is a partial parsing of the GPX 1.0 and 1.0 exchange types.
  -}
 module Geo.GPX.Conduit
@@ -7,6 +7,7 @@ module Geo.GPX.Conduit
         ) where
 
 import Control.Monad.Trans.Control
+import Control.Monad.Trans.Resource
 import Control.Monad
 import Data.Conduit
 import Data.Conduit.Text
@@ -15,11 +16,10 @@ import Data.Void (Void)
 import Data.Time.Format
 import Data.Text (Text)
 import qualified Data.Text as T
-import System.Locale
 import System.FilePath
 import Data.String
 import Data.Maybe (fromMaybe)
-import Data.Time (UTCTime, buildTime, parseTime)
+import Data.Time (UTCTime, buildTime, parseTimeM)
 import Data.XML.Types
 import Text.XML hiding (parseText)
 import Text.XML.Stream.Parse
@@ -70,10 +70,10 @@ readGPXFile :: FilePath -> IO (Maybe GPX)
 readGPXFile fp = runResourceT (parseFile def (fromString fp) $$ conduitGPX)
 
 parseGPX :: (MonadThrow m, MonadBaseControl IO m) => Text -> m (Maybe GPX)
-parseGPX t = runResourceT (yield t =$= mapOutput snd (parseText def) 
+parseGPX t = runResourceT (yield t =$= mapOutput snd (parseTextPos def) 
                                     $$ conduitGPX)
 
-conduitGPX :: MonadThrow m => Sink Event m (Maybe GPX)
+conduitGPX :: MonadThrow m => Consumer Event m (Maybe GPX)
 conduitGPX =
         tagPredicate ((== "gpx") . nameLocalName)
                         ignoreAttrs
@@ -82,14 +82,14 @@ conduitGPX =
                 ts <- many conduitTrack
                 return $ GPX ts)
 
-skipTagAndContents :: (MonadThrow m) => Text -> Pipe Event Event Void () m ()
+skipTagAndContents :: (MonadThrow m) => Text -> ConduitM Event o m ()
 skipTagAndContents n = do
   tagPredicate ((== n) . nameLocalName) ignoreAttrs
                (const $ L.sinkNull)
   return ()
 
 
-conduitTrack :: MonadThrow m => Sink Event m (Maybe Track)
+conduitTrack :: MonadThrow m => Consumer Event m (Maybe Track)
 conduitTrack = do
         tagPredicate ((== "trk") . nameLocalName) ignoreAttrs $ \_ -> do
         n <- join `fmap` tagPredicate (("name" ==) . nameLocalName) ignoreAttrs (const contentMaybe)
@@ -97,13 +97,13 @@ conduitTrack = do
         segs <- many conduitSegment
         return (Track n d segs)
 
-conduitSegment :: MonadThrow m => Sink Event m (Maybe Segment)
+conduitSegment :: MonadThrow m => Consumer Event m (Maybe Segment)
 conduitSegment = do 
         tagPredicate ((== "trkseg") . nameLocalName) ignoreAttrs $ \_ -> do
         pnts <- (many conduitPoint)
         return (Segment pnts)
 
-conduitPoint :: MonadThrow m => Sink Event m (Maybe Point)
+conduitPoint :: MonadThrow m => Consumer Event m (Maybe Point)
 conduitPoint =
         tagPredicate ((== "trkpt") . nameLocalName )
                                 (do l <- parseDouble `fmap` requireAttr "lat"
@@ -112,7 +112,7 @@ conduitPoint =
                                 parseETS
 
 -- Parse elevation, time, and speed tags
-parseETS :: MonadThrow m => Point -> Sink Event m Point
+parseETS :: MonadThrow m => Point -> Consumer Event m Point
 parseETS pnt = do
         let nameParse :: Name -> Maybe (Point -> Text -> Point)
             nameParse n =
@@ -120,7 +120,7 @@ parseETS pnt = do
                         "ele"   -> Just (\p t -> p { pntEle = Just (parseDouble t) })
                         "time"  -> Just (\p t -> p { pntTime = (parseUTC t) })
                         _       -> Just const -- ignore everything else
-            handleName :: (MonadThrow m) => pnt -> (pnt -> Text -> pnt) -> Sink Event m pnt
+            handleName :: (MonadThrow m) => pnt -> (pnt -> Text -> pnt) -> Consumer Event m pnt
             handleName p op = fmap (op p) content
         skipTagAndContents "extensions"
         pnt' <- tag nameParse return (handleName pnt)
@@ -140,6 +140,6 @@ parseUTC = either (const Nothing) id . AT.parseOnly (do
         -- buildTime.
         -- return (buildTime defaultTimeLocale 
         --   [('F', yearMonthDay), ('T', hourMinSec), ('Q', fraction)]))
-        return (parseTime defaultTimeLocale "%F %T %Q"
+        return (parseTimeM True defaultTimeLocale "%F %T %Q"
                         (unwords [yearMonthDay,hourMinSec,'.':fraction]))
         )
